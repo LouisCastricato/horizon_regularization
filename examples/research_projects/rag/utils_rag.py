@@ -98,7 +98,7 @@ class Seq2SeqDataset(Dataset):
         target_inputs = encode_line(target_tokenizer, tgt_line, self.max_target_length, "right")
 
         source_ids = source_inputs["input_ids"].squeeze()
-        context_ids = extra_content['input_ids']
+        context_ids = extra_content['input_ids'].squeeze()
         target_ids = target_inputs["input_ids"].squeeze()
         src_mask = source_inputs["attention_mask"].squeeze()
         return {
