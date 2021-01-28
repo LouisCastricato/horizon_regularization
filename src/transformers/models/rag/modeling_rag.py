@@ -516,6 +516,25 @@ class RagModel(RagPreTrainedModel):
         self.question_encoder = question_encoder
         self.generator = generator
 
+    def construct_concat(self, docs, extra = None):
+        doc_texts = list()
+        q = ""
+        tok = self.retriever.generator_tokenizer
+        for i in range(docs.size()[0]):
+            docs_str = ""
+            for j in range(self.config.n_docs//2):
+                t, q = tok.decode(docs[i][j], skip_special_tokens=True).split("//")[0:2]
+                if j != 0:
+                    docs_str += " ... " + t + " // " + q
+                else:
+                    docs_str += t + " // " + q
+            doc_texts.append(docs_str)
+        if extra is not None:
+            doc_texts.append(" ... " + extra + " // " + q)
+        return tok.batch_encode_plus(doc_texts, 
+        max_length = self.config.max_combined_length,
+        pad_to_max_length=True, truncation=True, return_tensors="pt")
+
     @add_start_docstrings_to_model_forward(RAG_FORWARD_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=RetrievAugLMOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
@@ -534,6 +553,7 @@ class RagModel(RagPreTrainedModel):
         output_hidden_states=None,
         output_retrieved=None,
         n_docs=None,
+        extra_context=[None, None]
     ):
         r"""
         Returns:
@@ -580,7 +600,7 @@ class RagModel(RagPreTrainedModel):
                     input_ids,
                     question_encoder_last_hidden_state.cpu().detach().to(torch.float32).numpy(),
                     prefix=self.generator.config.prefix,
-                    n_docs=n_docs,
+                    n_docs=self.config.n_docs,
                     return_tensors="pt",
                 )
                 context_input_ids, context_attention_mask, retrieved_doc_embeds, retrieved_doc_ids = (
@@ -599,6 +619,42 @@ class RagModel(RagPreTrainedModel):
                 doc_scores = torch.bmm(
                     question_encoder_last_hidden_state.unsqueeze(1), retrieved_doc_embeds.transpose(1, 2)
                 ).squeeze(1)
+
+                #print("IN STEP")
+                #print(context_input_ids.size())
+                #print(context_attention_mask.size())
+                #print(doc_scores.size())
+
+                if self.config.fusion_decoder:
+                    #Combine scores
+                    doc1_score, doc2_score = torch.split(doc_scores, self.config.n_docs//2,dim=-1)
+                    doc_scores = (torch.sum(doc1_score, dim=-1), torch.sum(doc2_score, dim=-1))
+                    doc_scores = torch.cat(doc_scores, dim=-1).view(-1, 2)
+
+                    #Combine text. TODO: Include prompt
+                    s = (doc_scores.size()[0], self.config.n_docs, -1)
+                    doc1, doc2 = torch.split(context_input_ids.view(s), self.config.n_docs//2, dim=1)
+
+
+                    encode1 = self.construct_concat(doc1, extra_context[0])
+                    encode2 = self.construct_concat(doc2, extra_context[1])
+                    
+                    #Move combined text back to input ids, set device
+                    context_input_ids =\
+                    torch.cat((encode1['input_ids'], encode2['input_ids']), dim=0).to(input_ids)
+                    context_attention_mask =\
+                    torch.cat((encode1['attention_mask'], encode2['attention_mask']), dim=0).to(input_ids)
+
+                    context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
+                    context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
+
+                    n_docs = 2
+
+
+                #print(decoder_input_ids.size())
+                #print(decoder_attention_mask.size())
+                #import sys
+                #sys.exit()
             else:
                 assert (
                     context_input_ids is not None
@@ -624,6 +680,7 @@ class RagModel(RagPreTrainedModel):
 
         if decoder_attention_mask is not None:
             decoder_attention_mask = decoder_attention_mask.repeat_interleave(n_docs, dim=0)
+        #print(decoder_input_ids.size())
 
         gen_outputs = self.generator(
             input_ids=context_input_ids,
@@ -705,6 +762,25 @@ class RagSequenceForGeneration(RagPreTrainedModel):
     def set_retriever(self, retriever: RagRetriever):
         self.rag.retriever = retriever
 
+    def construct_concat(self, docs, extra = None):
+        doc_texts = list()
+        q = ""
+        tok = self.retriever.generator_tokenizer
+        for i in range(docs.size()[0]):
+            docs_str = ""
+            for j in range(self.config.n_docs//2):
+                t, q = tok.decode(docs[i][j], skip_special_tokens=True).split("//")[0:2]
+                if j != 0:
+                    docs_str += " ... " + t + " // " + q
+                else:
+                    docs_str += t + " // " + q
+            doc_texts.append(docs_str)
+        if extra is not None:
+            doc_texts.append(" ... " + extra + " // " + q)
+        return tok.batch_encode_plus(doc_texts, 
+        max_length = self.config.max_combined_length,
+        pad_to_max_length=True, truncation=True, return_tensors="pt")
+
     @add_start_docstrings_to_model_forward(RAG_FORWARD_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=RetrievAugLMMarginOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
@@ -764,7 +840,10 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             >>> # 3. Forward to generator
             >>> outputs = model(context_input_ids=docs_dict["context_input_ids"], context_attention_mask=docs_dict["context_attention_mask"], doc_scores=doc_scores, decoder_input_ids=input_dict["labels"])
         """
-        n_docs = n_docs if n_docs is not None else self.config.n_docs
+        if not self.config.fusion_decoder:
+            n_docs = n_docs if n_docs is not None else self.config.n_docs
+        else:
+            n_docs = n_docs if n_docs is not None else self.config.n_docs // 2
         exclude_bos_score = exclude_bos_score if exclude_bos_score is not None else self.config.exclude_bos_score
         reduce_loss = reduce_loss if reduce_loss is not None else self.config.reduce_loss
 
@@ -846,6 +925,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         num_return_sequences=None,  # defaults to 1
         num_beams=None,  # defaults to 1
         n_docs=None,
+        extra_context = None, #For when we want to force the model to use a particular context doc.
         **model_kwargs
     ):
         """
@@ -899,6 +979,10 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             sequences. The second dimension (sequence length) is either equal to :obj:`max_length` or shorter if all
             batches finished early due to the :obj:`eos_token_id`.
         """
+        if extra_context is not None:
+            if isinstance(extra_context, list):
+                extra_context = extra_context[0]
+        extra_context = [extra_context, extra_context]
 
         n_docs = n_docs if n_docs is not None else self.config.n_docs
         do_deduplication = do_deduplication if do_deduplication is not None else self.config.do_deduplication
@@ -917,10 +1001,29 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                 input_ids,
                 question_hidden_states.cpu().detach().to(torch.float32).numpy(),
                 prefix=self.generator.config.prefix,
-                n_docs=n_docs,
+                n_docs=self.config.n_docs,
                 return_tensors="pt",
             )["context_input_ids"]
+            #See documentation in the forward function
+            if self.config.fusion_decoder:
+                s = (-1, self.config.n_docs, self.config.max_combined_length)
+                doc1, doc2 = torch.split(context_input_ids.view(s), self.config.n_docs//2, dim=1)
 
+                encode1 = self.construct_concat(doc1, extra_context[0])
+                encode2 = self.construct_concat(doc2, extra_context[1])
+
+                #Move combined text back to input ids, set device
+                context_input_ids =\
+                torch.cat((encode1['input_ids'], encode2['input_ids']), dim=0).to(input_ids)
+                context_attention_mask =\
+                torch.cat((encode1['attention_mask'], encode2['attention_mask']), dim=0).to(input_ids)
+
+                context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
+                #context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
+
+                n_docs = 2
+
+            #print(context_input_ids.size())
             # set to correct device
             context_input_ids = context_input_ids.to(input_ids)
 
@@ -987,12 +1090,20 @@ class RagSequenceForGeneration(RagPreTrainedModel):
     def get_nll(
         self, seq_logits, doc_scores, target, reduce_loss=False, epsilon=0.0, exclude_bos_score=False, n_docs=None
     ):
+        #print("IN NLL")
+        #print(seq_logits.size())
+        #print(doc_scores.size())
+        #print(target.size())
+        #print(n_docs)
         # shift tokens left
         target = torch.cat(
             [target[:, 1:], target.new(target.shape[0], 1).fill_(self.config.generator.pad_token_id)], 1
         )
-
-        n_docs = n_docs if n_docs is not None else self.config.n_docs
+        #print(n_docs)
+        if not self.config.fusion_decoder:
+            n_docs = n_docs if n_docs is not None else self.config.n_docs
+        else:
+            n_docs = 2
 
         # bos_token_id is None for T5
         bos_token_id = self.config.bos_token_id or self.config.generator.bos_token_id

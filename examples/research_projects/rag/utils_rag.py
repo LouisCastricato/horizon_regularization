@@ -93,6 +93,8 @@ class Seq2SeqDataset(Dataset):
         )
         target_tokenizer = self.tokenizer.generator if isinstance(self.tokenizer, RagTokenizer) else self.tokenizer
 
+        extra_context = source_line.split("///")[1]
+
         source_inputs = encode_line(source_tokenizer, source_line, self.max_source_length, "right")
         target_inputs = encode_line(target_tokenizer, tgt_line, self.max_target_length, "right")
 
@@ -101,6 +103,7 @@ class Seq2SeqDataset(Dataset):
         src_mask = source_inputs["attention_mask"].squeeze()
         return {
             "input_ids": source_ids,
+            "extra_context" : extra_context,
             "attention_mask": src_mask,
             "decoder_input_ids": target_ids,
         }
@@ -111,6 +114,7 @@ class Seq2SeqDataset(Dataset):
 
     def collate_fn(self, batch) -> Dict[str, torch.Tensor]:
         input_ids = torch.stack([x["input_ids"] for x in batch])
+        extra_context = [x["extra_context"] for x in batch]
         masks = torch.stack([x["attention_mask"] for x in batch])
         target_ids = torch.stack([x["decoder_input_ids"] for x in batch])
         tgt_pad_token_id = (
@@ -127,6 +131,7 @@ class Seq2SeqDataset(Dataset):
         source_ids, source_mask = trim_batch(input_ids, src_pad_token_id, attention_mask=masks)
         batch = {
             "input_ids": source_ids,
+            "extra_context": extra_context,
             "attention_mask": source_mask,
             "decoder_input_ids": y,
         }

@@ -215,7 +215,8 @@ class GenerativeQAModule(BaseTransformer):
         return lmap(str.strip, gen_text)
 
     def _step(self, batch: dict) -> Tuple:
-        source_ids, source_mask, target_ids = batch["input_ids"], batch["attention_mask"], batch["decoder_input_ids"]
+        source_ids, extra_context, source_mask, target_ids =\
+        batch["input_ids"], batch["extra_context"], batch["attention_mask"], batch["decoder_input_ids"]
 
         rag_kwargs = {}
         if isinstance(self.model, T5ForConditionalGeneration):
@@ -246,6 +247,7 @@ class GenerativeQAModule(BaseTransformer):
 
         outputs = self(
             source_ids,
+            extra_context=extra_context[0],
             attention_mask=source_mask,
             decoder_input_ids=decoder_input_ids,
             use_cache=False,
@@ -319,6 +321,7 @@ class GenerativeQAModule(BaseTransformer):
         batch = BatchEncoding(batch).to(device=self.model.device)
         generated_ids = self.model.generate(
             batch["input_ids"],
+            extra_context=batch["extra_context"],
             attention_mask=batch["attention_mask"],
             do_deduplication=False,  # rag specific parameter
             use_cache=True,

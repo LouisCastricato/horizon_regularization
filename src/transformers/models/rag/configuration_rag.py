@@ -110,6 +110,7 @@ class RagConfig(PretrainedConfig):
         do_marginalize=False,
         output_retrieved=False,
         use_cache=True,
+        fusion_decoder=True,
         **kwargs
     ):
         super().__init__(
@@ -160,6 +161,7 @@ class RagConfig(PretrainedConfig):
         self.do_deduplication = do_deduplication
 
         self.use_cache = use_cache
+        self.fusion_decoder = fusion_decoder
 
     @classmethod
     def from_question_encoder_generator_configs(

@@ -18,13 +18,14 @@ from typing import List, Optional
 
 from ...tokenization_utils_base import BatchEncoding
 from ...utils import logging
+from ..bart.tokenization_bart import BartTokenizer
 from .configuration_rag import RagConfig
 
 
 logger = logging.get_logger(__name__)
 
 
-class RagTokenizer:
+class RagTokenizer(BartTokenizer):
     def __init__(self, question_encoder, generator):
         self.question_encoder = question_encoder
         self.generator = generator
