@@ -1,13 +1,8 @@
 from transformers import RagTokenizer, RagRetriever, RagSequenceForGeneration, RagConfig
-from transformers import BartForConditionalGeneration, BartConfig
-
-config = RagConfig.from_pretrained("facebook/rag-sequence-nq")
-#config.generator = BartConfig.from_pretrained("facebook/bart-base")
 
 tokenizer = RagTokenizer.from_pretrained("facebook/rag-sequence-nq") 
 retriever = RagRetriever.from_pretrained("facebook/rag-sequence-nq", index_name="exact", use_dummy_dataset=True)
-model = RagSequenceForGeneration.from_pretrained("facebook/rag-sequence-nq", retriever=retriever,\
-generator = BartForConditionalGeneration.from_pretrained("facebook/bart-base"), config=config) 
+model = RagSequenceForGeneration.from_pretrained("facebook/rag-sequence-nq", retriever=retriever) 
 
 
 model.config.n_docs = 4

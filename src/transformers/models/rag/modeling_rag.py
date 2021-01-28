@@ -624,13 +624,12 @@ class RagModel(RagPreTrainedModel):
                 #print(context_input_ids.size())
                 #print(context_attention_mask.size())
                 #print(doc_scores.size())
-
                 if self.config.fusion_decoder:
+
                     #Combine scores
                     doc1_score, doc2_score = torch.split(doc_scores, self.config.n_docs//2,dim=-1)
                     doc_scores = (torch.sum(doc1_score, dim=-1), torch.sum(doc2_score, dim=-1))
-                    doc_scores = torch.cat(doc_scores, dim=-1).view(-1, 2)
-
+                    doc_scores = torch.stack(doc_scores, dim=-1)
                     #Combine text. TODO: Include prompt
                     s = (doc_scores.size()[0], self.config.n_docs, -1)
                     doc1, doc2 = torch.split(context_input_ids.view(s), self.config.n_docs//2, dim=1)
@@ -650,11 +649,10 @@ class RagModel(RagPreTrainedModel):
 
                     n_docs = 2
 
-
                 #print(decoder_input_ids.size())
                 #print(decoder_attention_mask.size())
-                #import sys
-                #sys.exit()
+                import sys
+                sys.exit()
             else:
                 assert (
                     context_input_ids is not None
