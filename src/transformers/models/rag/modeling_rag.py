@@ -522,15 +522,18 @@ class RagModel(RagPreTrainedModel):
         tok = self.retriever.generator_tokenizer
         for i in range(docs.size()[0]):
             docs_str = ""
-            for j in range(self.config.n_docs//2):
-                t, q = tok.decode(docs[i][j], skip_special_tokens=True).split("//")[0:2]
+            start = 0
+            if extra is not None:
+                docs_str += extra + " // " + q
+                start = 1
+            for j in range(start, self.config.n_docs//2, 1):
+                t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
                 if j != 0:
                     docs_str += " ... " + t + " // " + q
                 else:
                     docs_str += t + " // " + q
             doc_texts.append(docs_str)
-        if extra is not None:
-            doc_texts.append(" ... " + extra + " // " + q)
+
         return tok.batch_encode_plus(doc_texts, 
         max_length = self.config.max_combined_length,
         pad_to_max_length=True, truncation=True, return_tensors="pt")
@@ -651,8 +654,8 @@ class RagModel(RagPreTrainedModel):
 
                 #print(decoder_input_ids.size())
                 #print(decoder_attention_mask.size())
-                import sys
-                sys.exit()
+                #import sys
+                #sys.exit()
             else:
                 assert (
                     context_input_ids is not None
@@ -766,15 +769,18 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         tok = self.retriever.generator_tokenizer
         for i in range(docs.size()[0]):
             docs_str = ""
-            for j in range(self.config.n_docs//2):
-                t, q = tok.decode(docs[i][j], skip_special_tokens=True).split("//")[0:2]
+            start = 0
+            if extra is not None:
+                docs_str += extra + " // " + q
+                start = 1
+            for j in range(start, self.config.n_docs//2, 1):
+                t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
                 if j != 0:
                     docs_str += " ... " + t + " // " + q
                 else:
                     docs_str += t + " // " + q
             doc_texts.append(docs_str)
-        if extra is not None:
-            doc_texts.append(" ... " + extra + " // " + q)
+            
         return tok.batch_encode_plus(doc_texts, 
         max_length = self.config.max_combined_length,
         pad_to_max_length=True, truncation=True, return_tensors="pt")

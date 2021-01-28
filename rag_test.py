@@ -9,7 +9,7 @@ model.config.n_docs = 4
 retriever.config.n_docs = 4
 
 
-input_dict = tokenizer.prepare_seq2seq_batch("Where were the spiders?", return_tensors="pt") 
+input_dict = tokenizer.prepare_seq2seq_batch("What happened to mom?", return_tensors="pt") 
 generated = model.generate(input_ids=input_dict["input_ids"], extra_context="Spiders killed my mother.") 
 print(tokenizer.batch_decode(generated, skip_special_tokens=True)[0]) 
 
