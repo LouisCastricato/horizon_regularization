@@ -24,7 +24,7 @@ def encode_line(tokenizer, line, max_length, padding_side, pad_to_max_length=Tru
     return tokenizer(
         [line],
         max_length=max_length,
-        padding="max_length" if pad_to_max_length else None,
+        padding="max_length" if pad_to_max_length else False,
         truncation=True,
         return_tensors=return_tensors,
         add_special_tokens=True,
