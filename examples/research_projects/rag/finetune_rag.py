@@ -204,7 +204,9 @@ class GenerativeQAModule(BaseTransformer):
                 self.model.retriever.init_retrieval(self.distributed_port)
 
         self.distributed_retriever = hparams.distributed_retriever
-
+        self.source_tokenizer = (
+            self.tokenizer.question_encoder if isinstance(self.tokenizer, RagTokenizer) else self.tokenizer
+        )
     def forward(self, input_ids, **kwargs):
         return self.model(input_ids, **kwargs)
 
@@ -244,7 +246,7 @@ class GenerativeQAModule(BaseTransformer):
             rag_kwargs["reduce_loss"] = True
 
         assert decoder_input_ids is not None
-        ec = self.tokenizer.batch_decode(extra_context)[0]
+        ec = self.source_tokenizer.batch_decode(extra_context)[0]
         outputs = self(
             source_ids,
             extra_context=[ec, ec],
@@ -321,7 +323,7 @@ class GenerativeQAModule(BaseTransformer):
         batch = BatchEncoding(batch).to(device=self.model.device)
         generated_ids = self.model.generate(
             batch["input_ids"],
-            extra_context=self.tokenizer.batch_decode(batch["extra_context"])[0],
+            extra_context=self.source_tokenizer.batch_decode(batch["extra_context"])[0],
             attention_mask=batch["attention_mask"],
             do_deduplication=False,  # rag specific parameter
             use_cache=True,
@@ -372,6 +374,7 @@ class GenerativeQAModule(BaseTransformer):
 
     def train_dataloader(self) -> DataLoader:
         dataloader = self.get_dataloader("train", batch_size=self.hparams.train_batch_size, shuffle=True)
+        
         return dataloader
 
     def val_dataloader(self) -> DataLoader:
