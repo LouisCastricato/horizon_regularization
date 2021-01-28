@@ -247,7 +247,7 @@ class GenerativeQAModule(BaseTransformer):
 
         outputs = self(
             source_ids,
-            extra_context=extra_context[0],
+            extra_context=[extra_context[0], extra_context[0]],
             attention_mask=source_mask,
             decoder_input_ids=decoder_input_ids,
             use_cache=False,
