@@ -516,6 +516,12 @@ class RagModel(RagPreTrainedModel):
         self.question_encoder = question_encoder
         self.generator = generator
 
+        self.tokens_to_add = ["<context>", "<evidence>"]
+
+    def add_tokens(self):
+        self.retriever.generator_tokenizer.add_tokens(self.tokens_to_add)
+        self.generator.resize_token_embeddings(len(self.retriever.generator_tokenizer))
+
     def construct_concat(self, docs, extra = None):
         doc_texts = list()
         q = ""
@@ -524,16 +530,12 @@ class RagModel(RagPreTrainedModel):
             docs_str = ""
             start = 0
             if extra is not None:
-                docs_str += extra + " // " + q
+                docs_str += "<context>" + extra + "//" + q
                 start = 1
-            for j in range(start, self.config.n_docs//2, 1):
+            for j in range(start, self.config.n_docs//2 + start, 1):
                 t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
-                if j != 0:
-                    docs_str += " ... " + t + " // " + q
-                else:
-                    docs_str += t + " // " + q
+                docs_str += "<evidence>" + t + "//" + q
             doc_texts.append(docs_str)
-
         return tok.batch_encode_plus(doc_texts, 
         max_length = self.config.max_combined_length,
         pad_to_max_length=True, truncation=True, return_tensors="pt")
@@ -760,9 +762,10 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         # instantiate model
         self.rag = RagModel(config=config, question_encoder=question_encoder, generator=generator, retriever=retriever)
 
-    def set_retriever(self, retriever: RagRetriever):
-        self.rag.retriever = retriever
-
+        self.tokens_to_add = ["<context>", "<evidence>"]
+    def add_tokens(self):
+        self.retriever.generator_tokenizer.add_tokens(self.tokens_to_add)
+        self.rag.add_tokens()
     def construct_concat(self, docs, extra = None):
         doc_texts = list()
         q = ""
@@ -771,19 +774,18 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             docs_str = ""
             start = 0
             if extra is not None:
-                docs_str += extra + " // " + q
+                docs_str += "<context>" + extra + "//" + q
                 start = 1
-            for j in range(start, self.config.n_docs//2, 1):
+            for j in range(start, self.config.n_docs//2 + start, 1):
                 t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
-                if j != 0:
-                    docs_str += " ... " + t + " // " + q
-                else:
-                    docs_str += t + " // " + q
+                docs_str += "<evidence>" + t + "//" + q
             doc_texts.append(docs_str)
-            
         return tok.batch_encode_plus(doc_texts, 
         max_length = self.config.max_combined_length,
         pad_to_max_length=True, truncation=True, return_tensors="pt")
+
+    def set_retriever(self, retriever: RagRetriever):
+        self.rag.retriever = retriever
 
     @add_start_docstrings_to_model_forward(RAG_FORWARD_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=RetrievAugLMMarginOutput, config_class=_CONFIG_FOR_DOC)
