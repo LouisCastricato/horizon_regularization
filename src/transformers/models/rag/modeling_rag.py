@@ -28,7 +28,6 @@ from ...utils import logging
 from .configuration_rag import RagConfig
 from .retrieval_rag import RagRetriever
 
-
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "RagConfig"
@@ -529,8 +528,8 @@ class RagModel(RagPreTrainedModel):
         for i in range(docs.size()[0]):
             docs_str = ""
             start = 0
-            if extra is not None:
-                docs_str += "<context>" + extra + "//" + q
+            if extra[i//2] is not None:
+                docs_str += "<context>" + extra[i//2] + "//" + q
                 start = 1
             for j in range(start, self.config.n_docs//2 + start, 1):
                 t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
@@ -624,7 +623,6 @@ class RagModel(RagPreTrainedModel):
                 doc_scores = torch.bmm(
                     question_encoder_last_hidden_state.unsqueeze(1), retrieved_doc_embeds.transpose(1, 2)
                 ).squeeze(1)
-
                 #print("IN STEP")
                 #print(context_input_ids.size())
                 #print(context_attention_mask.size())
@@ -635,6 +633,7 @@ class RagModel(RagPreTrainedModel):
                     doc1_score, doc2_score = torch.split(doc_scores, self.config.n_docs//2,dim=-1)
                     doc_scores = (torch.sum(doc1_score, dim=-1), torch.sum(doc2_score, dim=-1))
                     doc_scores = torch.stack(doc_scores, dim=-1)
+                    
                     #Combine text. TODO: Include prompt
                     s = (doc_scores.size()[0], self.config.n_docs, -1)
                     doc1, doc2 = torch.split(context_input_ids.view(s), self.config.n_docs//2, dim=1)
@@ -773,8 +772,8 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         for i in range(docs.size()[0]):
             docs_str = ""
             start = 0
-            if extra is not None:
-                docs_str += "<context>" + extra + "//" + q
+            if extra[i//2] is not None:
+                docs_str += "<context>" + extra[i//2] + "//" + q
                 start = 1
             for j in range(start, self.config.n_docs//2 + start, 1):
                 t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
@@ -987,8 +986,9 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             batches finished early due to the :obj:`eos_token_id`.
         """
         if extra_context is not None:
-            if isinstance(extra_context, list):
-                extra_context = extra_context[0]
+            if num_beams % len(extra_context) == 0 and num_beams is not None:
+                extra_context = extra_context * (num_beams//len(extra_context))
+
         extra_context = [extra_context, extra_context]
 
         n_docs = n_docs if n_docs is not None else self.config.n_docs
@@ -1060,7 +1060,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             # then, run model forwards to get nll scores:
             if input_ids is not None:
                 new_input_ids = input_ids[index : index + 1].repeat(num_candidates, 1)
-                outputs = self(new_input_ids, labels=output_sequences, exclude_bos_score=True)
+                outputs = self(new_input_ids, labels=output_sequences, extra_context=extra_context, exclude_bos_score=True)
             else:  # input_ids is None, need context_input_ids/mask and doc_scores
                 assert (
                     context_attention_mask is not None
@@ -1084,6 +1084,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                     context_attention_mask=individual_attention_mask,
                     doc_scores=individual_doc_scores,
                     labels=output_sequences,
+                    extra_context=extra_context,
                     exclude_bos_score=True,
                 )
 

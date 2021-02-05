@@ -246,7 +246,7 @@ class GenerativeQAModule(BaseTransformer):
             rag_kwargs["reduce_loss"] = True
 
         assert decoder_input_ids is not None
-        ec = self.source_tokenizer.batch_decode(extra_context, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
+        ec = self.source_tokenizer.batch_decode(extra_context, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         outputs = self(
             source_ids,
             extra_context=[ec, ec],
@@ -323,7 +323,7 @@ class GenerativeQAModule(BaseTransformer):
         batch = BatchEncoding(batch).to(device=self.model.device)
         generated_ids = self.model.generate(
             batch["input_ids"],
-            extra_context=self.source_tokenizer.batch_decode(batch["extra_context"], skip_special_tokens=True, clean_up_tokenization_spaces=True)[0],
+            extra_context=self.source_tokenizer.batch_decode(batch["extra_context"], skip_special_tokens=True, clean_up_tokenization_spaces=True),
             attention_mask=batch["attention_mask"],
             do_deduplication=False,  # rag specific parameter
             use_cache=True,
