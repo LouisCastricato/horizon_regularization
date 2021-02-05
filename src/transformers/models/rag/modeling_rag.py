@@ -873,6 +873,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             output_hidden_states=output_hidden_states,
             output_retrieved=output_retrieved,
             n_docs=n_docs,
+            **kwargs # stores the extra_content if not none
         )
 
         loss = None
