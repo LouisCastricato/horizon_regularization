@@ -329,6 +329,7 @@ class GenerativeQAModule(BaseTransformer):
             use_cache=True,
             min_length=1,
             max_length=self.target_lens["val"],
+            num_beams=2,
         )
 
         gen_time = (time.time() - start_time) / batch["input_ids"].shape[0]
