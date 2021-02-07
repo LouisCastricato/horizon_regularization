@@ -112,6 +112,7 @@ class RagConfig(PretrainedConfig):
         output_retrieved=False,
         use_cache=True,
         fusion_decoder=True,
+        skip_ec = False,
         **kwargs
     ):
         super().__init__(
@@ -164,6 +165,7 @@ class RagConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.fusion_decoder = fusion_decoder
         self.n_docs_splits = n_docs_splits
+        self.skip_ec = skip_ec
 
 
     @classmethod
