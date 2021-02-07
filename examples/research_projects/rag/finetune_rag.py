@@ -249,7 +249,7 @@ class GenerativeQAModule(BaseTransformer):
         ec = self.source_tokenizer.batch_decode(extra_context, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         outputs = self(
             source_ids,
-            extra_context=[ec, ec],
+            extra_context=ec,
             attention_mask=source_mask,
             decoder_input_ids=decoder_input_ids,
             use_cache=False,
