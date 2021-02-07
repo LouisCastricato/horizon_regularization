@@ -94,6 +94,7 @@ class RagConfig(PretrainedConfig):
         title_sep=" / ",
         doc_sep=" // ",
         n_docs=5,
+        n_docs_splits=2,
         max_combined_length=300,
         retrieval_vector_size=768,
         retrieval_batch_size=8,
@@ -162,6 +163,8 @@ class RagConfig(PretrainedConfig):
 
         self.use_cache = use_cache
         self.fusion_decoder = fusion_decoder
+        self.n_docs_splits = n_docs_splits
+
 
     @classmethod
     def from_question_encoder_generator_configs(

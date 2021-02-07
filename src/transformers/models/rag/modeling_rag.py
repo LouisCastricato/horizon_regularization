@@ -528,10 +528,10 @@ class RagModel(RagPreTrainedModel):
         for i in range(docs.size()[0]):
             docs_str = ""
             start = 0
-            if extra[i//2] is not None:
-                docs_str += "<context>" + extra[i//2] + "//" + q
+            if extra[i//self.config.n_docs_splits] is not None:
+                docs_str += "<context>" + extra[i//self.config.n_docs_splits] + "//" + q
                 start = 1
-            for j in range(start, self.config.n_docs//2 + start, 1):
+            for j in range(start, self.config.n_docs//self.config.n_docs_splits + start, 1):
                 t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
                 docs_str += "<evidence>" + t + "//" + q
             doc_texts.append(docs_str)
@@ -557,7 +557,7 @@ class RagModel(RagPreTrainedModel):
         output_hidden_states=None,
         output_retrieved=None,
         n_docs=None,
-        extra_context=[None, None]
+        extra_context=None,
     ):
         r"""
         Returns:
@@ -630,28 +630,25 @@ class RagModel(RagPreTrainedModel):
                 if self.config.fusion_decoder:
 
                     #Combine scores
-                    doc1_score, doc2_score = torch.split(doc_scores, self.config.n_docs//2,dim=-1)
-                    doc_scores = (torch.sum(doc1_score, dim=-1), torch.sum(doc2_score, dim=-1))
+                    docs_scores = torch.split(doc_scores, self.config.n_docs//self.config.n_docs_splits,dim=-1)
+                    doc_scores = list(map(lambda x: torch.sum(x, dim=-1), docs_scores))
                     doc_scores = torch.stack(doc_scores, dim=-1)
                     
                     #Combine text. TODO: Include prompt
                     s = (doc_scores.size()[0], self.config.n_docs, -1)
-                    doc1, doc2 = torch.split(context_input_ids.view(s), self.config.n_docs//2, dim=1)
-
-
-                    encode1 = self.construct_concat(doc1, extra_context[0])
-                    encode2 = self.construct_concat(doc2, extra_context[1])
+                    docs = torch.split(context_input_ids.view(s), self.config.n_docs//self.config.n_docs_splits, dim=1)
+                    encodes = list(map(lambda x: self.construct_concat(x, extra_context), docs))
                     
                     #Move combined text back to input ids, set device
                     context_input_ids =\
-                    torch.cat((encode1['input_ids'], encode2['input_ids']), dim=0).to(input_ids)
+                    torch.cat([x['input_ids'] for x in encodes], dim=0).to(input_ids)
                     context_attention_mask =\
-                    torch.cat((encode1['attention_mask'], encode2['attention_mask']), dim=0).to(input_ids)
+                    torch.cat([x['attention_mask'] for x in encodes], dim=0).to(input_ids)
 
                     context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
                     context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
 
-                    n_docs = 2
+                    n_docs = self.config.n_docs_splits
 
                 #print(decoder_input_ids.size())
                 #print(decoder_attention_mask.size())
@@ -772,10 +769,10 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         for i in range(docs.size()[0]):
             docs_str = ""
             start = 0
-            if extra[i//2] is not None:
-                docs_str += "<context>" + extra[i//2] + "//" + q
+            if extra[i//self.config.n_docs_splits] is not None:
+                docs_str += "<context>" + extra[i//self.config.n_docs_splits] + "//" + q
                 start = 1
-            for j in range(start, self.config.n_docs//2 + start, 1):
+            for j in range(start, self.config.n_docs//self.config.n_docs_splits + start, 1):
                 t, q = tok.decode(docs[i][j-start], skip_special_tokens=True).split("//")[0:2]
                 docs_str += "<evidence>" + t + "//" + q
             doc_texts.append(docs_str)
@@ -985,11 +982,13 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             sequences. The second dimension (sequence length) is either equal to :obj:`max_length` or shorter if all
             batches finished early due to the :obj:`eos_token_id`.
         """
+        assert (self.config.n_docs % self.config.n_docs_splits == 0)
+
         if extra_context is not None:
             if num_beams % len(extra_context) == 0 and num_beams is not None:
                 extra_context = extra_context * (num_beams//len(extra_context))
 
-        extra_context = [extra_context, extra_context]
+        #extra_context = [extra_context, extra_context]
 
         n_docs = n_docs if n_docs is not None else self.config.n_docs
         do_deduplication = do_deduplication if do_deduplication is not None else self.config.do_deduplication
@@ -1013,22 +1012,21 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             )["context_input_ids"]
             #See documentation in the forward function
             if self.config.fusion_decoder:
+                #Combine text. TODO: Include prompt
                 s = (-1, self.config.n_docs, self.config.max_combined_length)
-                doc1, doc2 = torch.split(context_input_ids.view(s), self.config.n_docs//2, dim=1)
-
-                encode1 = self.construct_concat(doc1, extra_context[0])
-                encode2 = self.construct_concat(doc2, extra_context[1])
-
+                docs = torch.split(context_input_ids.view(s), self.config.n_docs//self.config.n_docs_splits, dim=1)
+                encodes = list(map(lambda x: self.construct_concat(x, extra_context), docs))
+                
                 #Move combined text back to input ids, set device
                 context_input_ids =\
-                torch.cat((encode1['input_ids'], encode2['input_ids']), dim=0).to(input_ids)
+                torch.cat([x['input_ids'] for x in encodes], dim=0).to(input_ids)
                 context_attention_mask =\
-                torch.cat((encode1['attention_mask'], encode2['attention_mask']), dim=0).to(input_ids)
+                torch.cat([x['attention_mask'] for x in encodes], dim=0).to(input_ids)
 
                 context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
-                #context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
+                context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
 
-                n_docs = 2
+                n_docs = self.config.n_docs_splits
 
             #print(context_input_ids.size())
             # set to correct device
@@ -1111,7 +1109,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         if not self.config.fusion_decoder:
             n_docs = n_docs if n_docs is not None else self.config.n_docs
         else:
-            n_docs = 2
+            n_docs = self.config.n_docs_splits
 
         # bos_token_id is None for T5
         bos_token_id = self.config.bos_token_id or self.config.generator.bos_token_id

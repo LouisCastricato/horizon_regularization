@@ -8,6 +8,8 @@ model.add_tokens()
 model.config.n_docs = 4
 retriever.config.n_docs = 4
 
+model.config.n_docs_splits = 1
+retriever.config.n_docs_splits = 1
 
 input_dict = tokenizer.prepare_seq2seq_batch("what happened to mom", return_tensors="pt") 
 generated = model.generate(input_ids=input_dict["input_ids"], extra_context=["Spiders killed my mother.", "She was too stinky."], num_beams=10) 
