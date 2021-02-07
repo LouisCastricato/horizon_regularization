@@ -769,7 +769,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         for i in range(docs.size()[0]):
             docs_str = ""
             start = 0
-            if extra[i//self.config.n_docs_splits] is not None and not self.config.skip_ec::
+            if extra[i//self.config.n_docs_splits] is not None and not self.config.skip_ec:
                 docs_str += "<context>" + extra[i//self.config.n_docs_splits] + "//" + q
                 start = 1
             for j in range(start, self.config.n_docs//self.config.n_docs_splits + start, 1):
