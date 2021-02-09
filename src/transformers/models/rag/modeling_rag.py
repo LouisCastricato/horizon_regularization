@@ -28,6 +28,8 @@ from ...utils import logging
 from .configuration_rag import RagConfig
 from .retrieval_rag import RagRetriever
 
+from transformers import BeamSearchScorer, LogitsProcessorList, MinLengthLogitsProcessor
+from transformers.modeling_outputs import BaseModelOutput
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "RagConfig"
@@ -502,7 +504,7 @@ class RagModel(RagPreTrainedModel):
 
         if generator is None:
             from ..auto.modeling_auto import AutoModelForSeq2SeqLM
-
+            config.generator.is_encoder_decoder=True
             generator = AutoModelForSeq2SeqLM.from_config(config.generator)
 
         self.retriever = retriever
@@ -514,7 +516,10 @@ class RagModel(RagPreTrainedModel):
 
         self.question_encoder = question_encoder
         self.generator = generator
-        print(type(generator))
+        #print(self.generator.config)
+        self.generator.config.is_encoder_decoder=True
+
+        #print(type(generator))
         self.tokens_to_add = ["<context>", "<evidence>"]
 
     def add_tokens(self):
@@ -962,7 +967,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         if not self.config.fusion_decoder:
             n_docs = n_docs if n_docs is not None else self.config.n_docs
         else:
-            n_docs = n_docs if n_docs is not None else self.config.n_docs // 2
+            n_docs = n_docs if n_docs is not None else self.config.n_docs // self.config.n_docs_splits
         exclude_bos_score = exclude_bos_score if exclude_bos_score is not None else self.config.exclude_bos_score
         reduce_loss = reduce_loss if reduce_loss is not None else self.config.reduce_loss
 
@@ -1247,9 +1252,9 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             # set to correct device
             context_input_ids = context_input_ids.to(input_ids)
 
+
         hypos = []
         model_kwargs["num_beams"] = num_beams
-        model_kwargs["num_return_sequences"] = num_beams
         model_kwargs["attention_mask"] = None
 
         batch_size = input_ids.shape[0] if input_ids is not None else context_input_ids.shape[0] // n_docs
@@ -1257,11 +1262,39 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         for index in range(batch_size):
             # first, generate beams from documents:
             generator_input_ids = context_input_ids[index * n_docs : (index + 1) * n_docs]  # (n_docs, max_len)
+            generator_encoder_outputs = encoder_outputs[index * n_docs : (index + 1) * n_docs].repeat_interleave(num_beams, dim=0)
+            generator_encoder_outputs = BaseModelOutput(last_hidden_state=generator_encoder_outputs)
 
-            output_sequences = self.generator.generate(
-                generator_input_ids,
-                **model_kwargs,
-            )  # n_docs * n_beam, tgt_len
+            generator_attention_mask = context_attention_mask[index * n_docs : (index + 1) * n_docs]
+            model_kwargs["encoder_outputs"] = generator_encoder_outputs
+
+
+            #TODO: Allow for custom parameters!
+            beam_scorer = BeamSearchScorer(
+                batch_size=1,
+                max_length=70,
+                num_beams=num_beams,
+                num_beam_hyps_to_keep=num_beams,
+                device=self.device,
+            )
+
+            logits_processor = LogitsProcessorList([
+                MinLengthLogitsProcessor(5, eos_token_id=self.generator.config.eos_token_id),
+            ])
+            input_ids_dec = torch.ones((num_beams, 1), device=self.device, dtype=torch.long)
+            input_ids_dec = input_ids_dec * self.generator.config.decoder_start_token_id
+
+            output_sequences = self.generator.beam_search(input_ids_dec,\
+                beam_scorer,\
+                logits_processor=logits_processor,\
+                num_return_sequences=num_beams,\
+                **model_kwargs)
+
+            #print(self.retriever.generator_tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
+
+            #import sys
+            #sys.exit()
+
             if do_deduplication:
                 # do_deduplication, max_output_len
                 output_sequences = torch.stack(list({str(k.tolist()): k for k in output_sequences}.values()))
@@ -1275,6 +1308,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                 new_input_ids = input_ids[index : index + 1].repeat(num_candidates, 1)
                 outputs = self(new_input_ids, labels=output_sequences, extra_context=extra_context, exclude_bos_score=True)
             else:  # input_ids is None, need context_input_ids/mask and doc_scores
+                #TODO: This path needs fixing so that it doesnt use generator input IDS
                 assert (
                     context_attention_mask is not None
                 ), "Make sure that `context_attention_mask` are passed, if no `input_ids` is set. Alternatively, you can set a retriever using the `set_retriever(...)` function."
