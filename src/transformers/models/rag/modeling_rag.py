@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
 import torch
+import sys
 
 from ...configuration_utils import PretrainedConfig
 from ...file_utils import add_start_docstrings_to_model_forward, replace_return_docstrings
@@ -1137,6 +1138,8 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                 n_docs=self.config.n_docs,
                 return_tensors="pt",
             )["context_input_ids"]
+            #print("context_input_ids: ", context_input_ids.size())
+            #sys.exit()
             #See documentation in the forward function
             if self.config.fusion_decoder:
                 #Combine text. TODO: Include prompt
@@ -1209,6 +1212,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                 doc_lengths = torch.sum(evidence_context_attention_mask, dim=-1, keepdim=True).view(s)
                 encoder_splits = torch.split(encoder_outputs, self.config.n_docs//self.config.n_docs_splits, dim=1)
                 d_lengths_splits = torch.split(doc_lengths, self.config.n_docs//self.config.n_docs_splits, dim=1)
+                #print("d_lengths_splits: ", d_lengths_splits)
 
                 if not self.config.skip_ec:
                     pmpt_length = torch.sum(extra_context_attention_mask, dim=-1, keepdim=True).view(encoder_outputs.size(0), -1)
@@ -1219,11 +1223,10 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                 decoder_in = torch.zeros((batch_size,\
                     self.config.n_docs_splits,\
                     self.config.max_combined_length,\
-                    encoder_outputs.size(-1)), dtype=torch.float).to(input_ids)
+                    encoder_outputs.size(-1)), dtype=torch.float32)
                 decoder_in_mask = torch.zeros((batch_size,\
                     self.config.n_docs_splits,\
-                    self.config.max_combined_length), dtype=torch.float).to(input_ids)
-                import sys
+                    self.config.max_combined_length), dtype=torch.float32)
 
                 #over n_docs_splits
                 for i, lens in enumerate(d_lengths_splits):
@@ -1236,10 +1239,11 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                         if not self.config.skip_ec:
                             length = pmpt_lengths_splits[i][j].item()
                             end = min(length+pos, self.config.max_combined_length)
+                            #print(decoder_in[j][i][pos:end])
                             decoder_in[j][i][pos:end] = pmpt_splits[i][j][0][0:min(length, end-pos)]
-                            print(pmpt_splits[i][j][0][0:min(length, end-pos)])
-                            print(decoder_in[j][i][pos:end])
-                            sys.exit()
+                            #print(pmpt_splits[i][j][0][0:min(length, end-pos)])
+                            #print(decoder_in[j][i][pos:end])
+                            #sys.exit()
                             decoder_in_mask[j][i][pos:end] = torch.ones(min(length, end-pos)).to(input_ids)
                             
                             pos += length
@@ -1256,9 +1260,11 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                             if length + pos >= self.config.max_combined_length:
                                 break
                             pos += length
-                print(encoder_splits[0])
-                print(decoder_in)
-                sys.exit()
+                decoder_in.to("cuda:0")
+                decoder_in_mask.to("cuda:0")
+                #print(encoder_splits[0])
+                #print(decoder_in)
+                #sys.exit()
                 #Finalize
                 encoder_outputs = decoder_in.type(torch.cuda.FloatTensor).view(-1, decoder_in.size(2), decoder_in.size(3))
                 context_attention_mask = decoder_in_mask.type(torch.cuda.FloatTensor)
