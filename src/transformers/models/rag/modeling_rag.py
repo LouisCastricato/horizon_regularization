@@ -531,6 +531,8 @@ class RagModel(RagPreTrainedModel):
         context_texts = list()
         q = ""
         tok = self.retriever.generator_tokenizer
+
+        #Batch
         for i in range(docs.size()[0]):
             docs_str = list()
             start = 0
@@ -633,17 +635,17 @@ class RagModel(RagPreTrainedModel):
                 retrieved_doc_embeds = retrieved_doc_embeds.to(question_encoder_last_hidden_state)
                 context_input_ids = context_input_ids.to(input_ids)
                 context_attention_mask = context_attention_mask.to(input_ids)
+                #print(context_input_ids.size())
 
                 # compute doc_scores
                 doc_scores = torch.bmm(
                     question_encoder_last_hidden_state.unsqueeze(1), retrieved_doc_embeds.transpose(1, 2)
                 ).squeeze(1)
-                #print("IN STEP")
-                #print(context_input_ids.size())
-                #print(context_attention_mask.size())
-                #print(doc_scores.size())
                 
                 if self.config.fusion_decoder:
+                    batch_size = doc_scores.size(0)
+                    context_input_ids = context_input_ids.view(batch_size, -1, context_input_ids.size(-1))
+                    doc_scores = doc_scores.view(batch_size, -1)
 
                     #Combine scores
                     docs_scores = torch.split(doc_scores, self.config.n_docs//self.config.n_docs_splits,dim=-1)
@@ -651,23 +653,26 @@ class RagModel(RagPreTrainedModel):
                     doc_scores = torch.stack(doc_scores, dim=-1)
                     
                     #Combine text. Includes prompt.
-                    s = (doc_scores.size()[0], self.config.n_docs, -1)
+                    s = (doc_scores.size(0), self.config.n_docs, -1)
                     docs = torch.split(context_input_ids.view(s), self.config.n_docs//self.config.n_docs_splits, dim=1)
                     encodes = list(map(lambda x: self.construct_concat(x, extra_context), docs))
                     evidence_encodes = list(map(lambda x: x[0], encodes))
                     extra_context_encodes = list(map(lambda x: x[1], encodes))
 
                     #Batch together documents
+                    s = (batch_size, self.config.n_docs//self.config.n_docs_splits, -1)
                     evidence_context_input_ids =\
-                    torch.cat([x['input_ids'] for x in evidence_encodes], dim=0).to(input_ids)
+                    torch.cat([x['input_ids'].view(s) for x in evidence_encodes], dim=1).to(input_ids)
                     evidence_context_attention_mask =\
-                    torch.cat([x['attention_mask'] for x in evidence_encodes], dim=0).to(input_ids)
+                    torch.cat([x['attention_mask'].view(s) for x in evidence_encodes], dim=1).to(input_ids)
 
                     if not self.config.skip_ec:
+                        s = (batch_size, -1)
                         extra_context_input_ids =\
-                        torch.cat([x['input_ids'] for x in extra_context_encodes], dim=0).to(input_ids)
+                        torch.cat([x['input_ids'].view(s) for x in extra_context_encodes], dim=0).to(input_ids)
                         extra_context_attention_mask =\
-                        torch.cat([x['attention_mask'] for x in extra_context_encodes], dim=0).to(input_ids)
+                        torch.cat([x['attention_mask'].view(s) for x in extra_context_encodes], dim=0).to(input_ids)
+
 
                     #Useful if we cannot encode everything at once 👌
                     b_size = 1
@@ -686,31 +691,34 @@ class RagModel(RagPreTrainedModel):
                     for i in range(b_size):
                         c_ids = batch_context_ids[i].to(input_ids)
                         a_msk = batch_attention_mask[i].to(input_ids)
-
-                        encoder_outputs.append(self.generator.get_encoder()(input_ids=c_ids, attention_mask=a_msk)['last_hidden_state'])
+                        #Group batches together
+                        s = (-1, evidence_context_attention_mask.size(-1))
+                        encoder_outputs.append(self.generator.get_encoder()(input_ids=c_ids.view(s), attention_mask=a_msk.view(s))['last_hidden_state'])
 
                         if not self.config.skip_ec:
                             c_ids = batch_extra_context_ids[i].to(input_ids)
                             a_msk = batch_extra_attention_mask[i].to(input_ids)
                             extra_context_outputs.append(self.generator.get_encoder()(input_ids=c_ids, attention_mask=a_msk)['last_hidden_state'])
 
-                        #print(encoded_tensor)
-                        #print(encoded_tensor.size())
-                    
                     if len(encoder_outputs) == 1:
-                        encoder_outputs = encoder_outputs[0].view(doc_scores.size(0),\
+                        encoder_outputs = encoder_outputs[0].view(batch_size,\
                             -1, \
-                            encoder_outputs[0].size(1),\
-                            encoder_outputs[0].size(2))
+                            encoder_outputs[0].size(-2),\
+                            encoder_outputs[0].size(-1))
 
                         if not self.config.skip_ec:
-                            extra_context_outputs = extra_context_outputs[0].view(doc_scores.size(0),\
+                            extra_context_outputs = extra_context_outputs[0].view(batch_size,\
                             -1, \
-                            extra_context_outputs[0].size(1),\
-                            extra_context_outputs[0].size(2))
-                        
+                            extra_context_outputs[0].size(-2),\
+                            extra_context_outputs[0].size(-1))
+
+                    #encoder_outputs: batch_size x n_docs x seq_len x hidden dim
+                    #extra_context_outputs: batch_size x n_doc_splits x seq_len x hidden dim
+
+                    s = (batch_size, self.config.n_docs, -1)
+                    
                     #Find document lengths and split over them
-                    doc_lengths = torch.sum(evidence_context_attention_mask, dim=-1, keepdim=True).view(encoder_outputs.size(0), -1)
+                    doc_lengths = torch.sum(evidence_context_attention_mask, dim=-1, keepdim=True).view(s)
                     encoder_splits = torch.split(encoder_outputs, self.config.n_docs//self.config.n_docs_splits, dim=1)
                     d_lengths_splits = torch.split(doc_lengths, self.config.n_docs//self.config.n_docs_splits, dim=1)
 
@@ -720,15 +728,17 @@ class RagModel(RagPreTrainedModel):
                         pmpt_splits = torch.split(extra_context_outputs, 1, dim=1)
 
                     #Vector to copy to
-                    decoder_in = torch.zeros((encoder_outputs.size(0), \
-                        self.config.n_docs//self.config.n_docs_splits,\
+                    decoder_in = torch.zeros((batch_size, \
+                        self.config.n_docs_splits,\
                         self.config.max_combined_length,\
-                        encoder_outputs.size(3))).to(input_ids)
-                    decoder_in_mask = torch.zeros((encoder_outputs.size(0), \
-                        self.config.n_docs//self.config.n_docs_splits,\
+                        encoder_outputs.size(-1))).to(input_ids)
+                    decoder_in_mask = torch.zeros((batch_size, \
+                        self.config.n_docs_splits,\
                         self.config.max_combined_length)).to(input_ids)
 
+                    #over n_docs_splits
                     for i, lens in enumerate(d_lengths_splits):
+                        #batch
                         for j, component in enumerate(lens):
                             pos = 0
                             #Append prompt
@@ -751,19 +761,14 @@ class RagModel(RagPreTrainedModel):
                                 if length + pos >= self.config.max_combined_length:
                                     break
                                 pos += length
-
+    
                     #Finalize
                     encoder_outputs = decoder_in.type(torch.cuda.FloatTensor).view(-1, decoder_in.size(2), decoder_in.size(3))
                     context_attention_mask = decoder_in_mask.type(torch.cuda.FloatTensor)
                     context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
-                    context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
-
+                    context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size(-1))
                     n_docs = self.config.n_docs_splits
 
-                #print(decoder_input_ids.size())
-                #print(decoder_attention_mask.size())
-                #import sys
-                #sys.exit()
             
             else:
                 assert (
@@ -1107,7 +1112,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         assert (self.config.n_docs % self.config.n_docs_splits == 0)
 
         if extra_context is not None:
-            if num_beams % len(extra_context) == 0 and num_beams is not None:
+            if num_beams is not None and num_beams % len(extra_context) == 0 :
                 extra_context = extra_context * (num_beams//len(extra_context))
 
         #extra_context = [extra_context, extra_context]
@@ -1138,30 +1143,31 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                 s = (-1, self.config.n_docs, self.config.max_combined_length)
                 docs = torch.split(context_input_ids.view(s), self.config.n_docs//self.config.n_docs_splits, dim=1)
                 encodes = list(map(lambda x: self.construct_concat(x, extra_context), docs))
+                batch_size = context_input_ids.size(0)
+                #print(encodes)
                 evidence_encodes = list(map(lambda x: x[0], encodes))
                 extra_context_encodes = list(map(lambda x: x[1], encodes))
 
-
-                temp_size = context_input_ids.size()[0]
-
                 #Batch together documents
+                s = (batch_size, self.config.n_docs//self.config.n_docs_splits, -1)
                 evidence_context_input_ids =\
-                torch.cat([x['input_ids'] for x in evidence_encodes], dim=0).to(input_ids)
+                torch.cat([x['input_ids'].view(s) for x in evidence_encodes], dim=1).to(input_ids)
                 evidence_context_attention_mask =\
-                torch.cat([x['attention_mask'] for x in evidence_encodes], dim=0).to(input_ids)
+                torch.cat([x['attention_mask'].view(s) for x in evidence_encodes], dim=1).to(input_ids)
 
                 if not self.config.skip_ec:
+                    s = (batch_size, -1)
                     extra_context_input_ids =\
-                    torch.cat([x['input_ids'] for x in extra_context_encodes], dim=0).to(input_ids)
+                    torch.cat([x['input_ids'].view(s) for x in extra_context_encodes], dim=0).to(input_ids)
                     extra_context_attention_mask =\
-                    torch.cat([x['attention_mask'] for x in extra_context_encodes], dim=0).to(input_ids)
+                    torch.cat([x['attention_mask'].view(s) for x in extra_context_encodes], dim=0).to(input_ids)
 
                 #Useful if we cannot encode everything at once 👌
                 b_size = 1
 
                 #Encode documents
-                batch_context_ids = torch.split(evidence_context_input_ids, context_input_ids.size(0)//b_size, dim=0)
-                batch_attention_mask = torch.split(evidence_context_attention_mask, context_input_ids.size(0)//b_size, dim=0)
+                batch_context_ids = torch.split(evidence_context_input_ids, batch_size//b_size, dim=0)
+                batch_attention_mask = torch.split(evidence_context_attention_mask, batch_size//b_size, dim=0)
 
                 if not self.config.skip_ec:
                     batch_extra_context_ids = torch.split(extra_context_input_ids, extra_context_input_ids.size(0)//b_size, dim=0)
@@ -1173,31 +1179,34 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                 for i in range(b_size):
                     c_ids = batch_context_ids[i].to(input_ids)
                     a_msk = batch_attention_mask[i].to(input_ids)
-
-                    encoder_outputs.append(self.generator.get_encoder()(input_ids=c_ids, attention_mask=a_msk)['last_hidden_state'])
+                    #Group batches together
+                    s = (-1, evidence_context_attention_mask.size(-1))
+                    encoder_outputs.append(self.generator.get_encoder()(input_ids=c_ids.view(s), attention_mask=a_msk.view(s))['last_hidden_state'])
 
                     if not self.config.skip_ec:
                         c_ids = batch_extra_context_ids[i].to(input_ids)
                         a_msk = batch_extra_attention_mask[i].to(input_ids)
                         extra_context_outputs.append(self.generator.get_encoder()(input_ids=c_ids, attention_mask=a_msk)['last_hidden_state'])
 
-                    #print(encoded_tensor)
-                    #print(encoded_tensor.size())
-                
                 if len(encoder_outputs) == 1:
-                    encoder_outputs = encoder_outputs[0].view(temp_size//self.config.n_docs_splits,\
+                    encoder_outputs = encoder_outputs[0].view(batch_size,\
                         -1, \
-                        encoder_outputs[0].size(1),\
-                        encoder_outputs[0].size(2))
+                        encoder_outputs[0].size(-2),\
+                        encoder_outputs[0].size(-1))
 
                     if not self.config.skip_ec:
-                        extra_context_outputs = extra_context_outputs[0].view(temp_size//self.config.n_docs_splits,\
+                        extra_context_outputs = extra_context_outputs[0].view(batch_size,\
                         -1, \
-                        extra_context_outputs[0].size(1),\
-                        extra_context_outputs[0].size(2))
-                    
+                        extra_context_outputs[0].size(-2),\
+                        extra_context_outputs[0].size(-1))
+
+                #encoder_outputs: batch_size x n_docs x seq_len x hidden dim
+                #extra_context_outputs: batch_size x n_doc_splits x seq_len x hidden dim
+                s = (batch_size, self.config.n_docs, -1)
+                
+
                 #Find document lengths and split over them
-                doc_lengths = torch.sum(evidence_context_attention_mask, dim=-1, keepdim=True).view(encoder_outputs.size(0), -1)
+                doc_lengths = torch.sum(evidence_context_attention_mask, dim=-1, keepdim=True).view(s)
                 encoder_splits = torch.split(encoder_outputs, self.config.n_docs//self.config.n_docs_splits, dim=1)
                 d_lengths_splits = torch.split(doc_lengths, self.config.n_docs//self.config.n_docs_splits, dim=1)
 
@@ -1207,27 +1216,36 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                     pmpt_splits = torch.split(extra_context_outputs, 1, dim=1)
 
                 #Vector to copy to
-                decoder_in = torch.zeros((encoder_outputs.size(0), \
-                    self.config.n_docs//self.config.n_docs_splits,\
+                decoder_in = torch.zeros((batch_size,\
+                    self.config.n_docs_splits,\
                     self.config.max_combined_length,\
-                    encoder_outputs.size(3))).to(input_ids)
-                decoder_in_mask = torch.zeros((encoder_outputs.size(0), \
-                    self.config.n_docs//self.config.n_docs_splits,\
-                    self.config.max_combined_length)).to(input_ids)
+                    encoder_outputs.size(-1)), dtype=torch.float).to(input_ids)
+                decoder_in_mask = torch.zeros((batch_size,\
+                    self.config.n_docs_splits,\
+                    self.config.max_combined_length), dtype=torch.float).to(input_ids)
+                import sys
 
+                #over n_docs_splits
                 for i, lens in enumerate(d_lengths_splits):
+                    #batch
                     for j, component in enumerate(lens):
                         pos = 0
+                        print("i: " + str(i))
+                        print("j: " + str(j))
                         #Append prompt
                         if not self.config.skip_ec:
                             length = pmpt_lengths_splits[i][j].item()
                             end = min(length+pos, self.config.max_combined_length)
-                            decoder_in[j][i][pos:end] =pmpt_splits[i][j][0][0:min(length, end-pos)]
+                            decoder_in[j][i][pos:end] = pmpt_splits[i][j][0][0:min(length, end-pos)]
+                            print(pmpt_splits[i][j][0][0:min(length, end-pos)])
+                            print(decoder_in[j][i][pos:end])
+                            sys.exit()
                             decoder_in_mask[j][i][pos:end] = torch.ones(min(length, end-pos)).to(input_ids)
                             
                             pos += length
                         #Append evidence docs
                         for k, L in enumerate(component):
+                            print("k: " + str(k))
                             length = L.item()
                             end = min(length+pos, self.config.max_combined_length)
                             #Copy to new vector
@@ -1238,36 +1256,35 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                             if length + pos >= self.config.max_combined_length:
                                 break
                             pos += length
-
+                print(encoder_splits[0])
+                print(decoder_in)
+                sys.exit()
                 #Finalize
                 encoder_outputs = decoder_in.type(torch.cuda.FloatTensor).view(-1, decoder_in.size(2), decoder_in.size(3))
                 context_attention_mask = decoder_in_mask.type(torch.cuda.FloatTensor)
                 context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
-                context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size()[-1])
+                context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size(-1))
 
                 n_docs = self.config.n_docs_splits
 
-
-            #print(context_input_ids.size())
             # set to correct device
             context_input_ids = context_input_ids.to(input_ids)
 
 
         hypos = []
         model_kwargs["num_beams"] = num_beams
-        model_kwargs["attention_mask"] = None
 
         batch_size = input_ids.shape[0] if input_ids is not None else context_input_ids.shape[0] // n_docs
 
         for index in range(batch_size):
             # first, generate beams from documents:
             generator_input_ids = context_input_ids[index * n_docs : (index + 1) * n_docs]  # (n_docs, max_len)
-            generator_encoder_outputs = encoder_outputs[index * n_docs : (index + 1) * n_docs].repeat_interleave(num_beams, dim=0)
+            generator_encoder_outputs = encoder_outputs[index * n_docs : (index + 1) * n_docs]
             generator_encoder_outputs = BaseModelOutput(last_hidden_state=generator_encoder_outputs)
-
             generator_attention_mask = context_attention_mask[index * n_docs : (index + 1) * n_docs]
             model_kwargs["encoder_outputs"] = generator_encoder_outputs
-
+            model_kwargs["attention_mask"] = generator_attention_mask
+            #print(generator_attention_mask)
 
             #TODO: Allow for custom parameters!
             beam_scorer = BeamSearchScorer(
@@ -1279,7 +1296,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             )
 
             logits_processor = LogitsProcessorList([
-                MinLengthLogitsProcessor(5, eos_token_id=self.generator.config.eos_token_id),
+                MinLengthLogitsProcessor(1, eos_token_id=self.generator.config.eos_token_id),
             ])
             input_ids_dec = torch.ones((num_beams, 1), device=self.device, dtype=torch.long)
             input_ids_dec = input_ids_dec * self.generator.config.decoder_start_token_id
