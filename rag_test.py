@@ -14,7 +14,7 @@ retriever.config.n_docs_splits = 4
 model.skip_ec = False
 model.skip_ec = False
 
-input_dict = tokenizer.prepare_seq2seq_batch("Hello?", return_tensors="pt").to("cuda:0")
+input_dict = tokenizer.prepare_seq2seq_batch("How are you?", return_tensors="pt").to("cuda:0")
 generated = model.generate(input_ids=input_dict["input_ids"], extra_context=["Cats are cool animals!"], num_beams=4) 
 print(tokenizer.batch_decode(generated, skip_special_tokens=True)[0]) 
 

@@ -737,38 +737,48 @@ class RagModel(RagPreTrainedModel):
                         self.config.n_docs_splits,\
                         self.config.max_combined_length)).to(input_ids)
 
-                    #over n_docs_splits
-                    for i, lens in enumerate(d_lengths_splits):
-                        #batch
-                        for j, component in enumerate(lens):
-                            pos = 0
-                            #Append prompt
-                            if not self.config.skip_ec:
-                                length = pmpt_lengths_splits[i][j].item()
-                                end = min(length+pos, self.config.max_combined_length)
-                                decoder_in[j][i][pos:end] =pmpt_splits[i][j][0][0:min(length, end-pos)]
-                                decoder_in_mask[j][i][pos:end] = torch.ones(min(length, end-pos)).to(input_ids)
-                                
-                                pos += length
-                            #Append evidence docs
-                            for k, L in enumerate(component):
-                                length = L.item()
-                                end = min(length+pos, self.config.max_combined_length)
-                                #Copy to new vector
-                                decoder_in[j][i][pos:end] = encoder_splits[i][j][k][0:min(length, end-pos)]
-                                decoder_in_mask[j][i][pos:end] = torch.ones(min(length, end-pos)).to(input_ids)
 
-                                #If we exceede buffer size, break
-                                if length + pos >= self.config.max_combined_length:
-                                    break
-                                pos += length
-    
-                    #Finalize
-                    encoder_outputs = decoder_in.type(torch.cuda.FloatTensor).view(-1, decoder_in.size(2), decoder_in.size(3))
-                    context_attention_mask = decoder_in_mask.type(torch.cuda.FloatTensor)
-                    context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
-                    context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size(-1))
-                    n_docs = self.config.n_docs_splits
+                #over n_docs_splits
+                for i, lens in enumerate(d_lengths_splits):
+                    #batch
+                    for j, component in enumerate(lens):
+                        pos = 0
+                        #Append prompt
+                        if not self.config.skip_ec:
+                            length = pmpt_lengths_splits[i][j].item()
+                            end = min(length+pos, self.config.max_combined_length)
+                            #print(decoder_in[j][i][pos:end])
+                            decoder_in[j][i][pos:end] = pmpt_splits[i][j][0][0:min(length, end-pos)]
+                            #print(pmpt_splits[i][j][0][0:min(length, end-pos)])
+                            #print(decoder_in[j][i][pos:end])
+                            #sys.exit()
+                            decoder_in_mask[j][i][pos:end] = torch.ones(min(length, end-pos)).to(input_ids)
+                            
+                            pos += length
+                        #Append evidence docs
+                        for k, L in enumerate(component):
+                            length = L.item()
+                            end = min(length+pos, self.config.max_combined_length)
+                            #Copy to new vector
+                            decoder_in[j][i][pos:end] = encoder_splits[i][j][k][0:min(length, end-pos)]
+                            decoder_in_mask[j][i][pos:end] = torch.ones(min(length, end-pos)).to(input_ids)
+
+                            #If we exceede buffer size, break
+                            if length + pos >= self.config.max_combined_length:
+                                break
+                            pos += length
+                decoder_in.to("cuda:0")
+                decoder_in_mask.to("cuda:0")
+                #print(encoder_splits[0])
+                #print(decoder_in)
+                #sys.exit()
+                #Finalize
+                encoder_outputs = decoder_in.type(torch.cuda.FloatTensor).view(-1, decoder_in.size(2), decoder_in.size(3))
+                context_attention_mask = decoder_in_mask.type(torch.cuda.FloatTensor)
+                context_input_ids = context_input_ids.view(-1, context_input_ids.size()[-1])
+                context_attention_mask = context_attention_mask.view(-1, context_attention_mask.size(-1))
+
+                n_docs = self.config.n_docs_splits
 
             
             else:
@@ -1233,8 +1243,6 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                     #batch
                     for j, component in enumerate(lens):
                         pos = 0
-                        print("i: " + str(i))
-                        print("j: " + str(j))
                         #Append prompt
                         if not self.config.skip_ec:
                             length = pmpt_lengths_splits[i][j].item()
@@ -1249,7 +1257,6 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                             pos += length
                         #Append evidence docs
                         for k, L in enumerate(component):
-                            print("k: " + str(k))
                             length = L.item()
                             end = min(length+pos, self.config.max_combined_length)
                             #Copy to new vector
