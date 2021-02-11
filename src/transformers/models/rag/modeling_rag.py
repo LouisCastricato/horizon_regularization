@@ -767,8 +767,8 @@ class RagModel(RagPreTrainedModel):
                             if length + pos >= self.config.max_combined_length:
                                 break
                             pos += length
-                decoder_in.to("cuda:0")
-                decoder_in_mask.to("cuda:0")
+                decoder_in = decoder_in.to("cuda:0")
+                decoder_in_mask = decoder_in_mask.to("cuda:0")
                 #print(encoder_splits[0])
                 #print(decoder_in)
                 #sys.exit()
@@ -1267,8 +1267,8 @@ class RagSequenceForGeneration(RagPreTrainedModel):
                             if length + pos >= self.config.max_combined_length:
                                 break
                             pos += length
-                decoder_in.to("cuda:0")
-                decoder_in_mask.to("cuda:0")
+                decoder_in = decoder_in.to("cuda:0")
+                decoder_in_mask = decoder_in_mask.to("cuda:0")
                 #print(encoder_splits[0])
                 #print(decoder_in)
                 #sys.exit()
