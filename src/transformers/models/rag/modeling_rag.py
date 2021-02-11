@@ -732,10 +732,10 @@ class RagModel(RagPreTrainedModel):
                     decoder_in = torch.zeros((batch_size, \
                         self.config.n_docs_splits,\
                         self.config.max_combined_length,\
-                        encoder_outputs.size(-1))).to(input_ids)
+                        encoder_outputs.size(-1)))
                     decoder_in_mask = torch.zeros((batch_size, \
                         self.config.n_docs_splits,\
-                        self.config.max_combined_length)).to(input_ids)
+                        self.config.max_combined_length))
 
 
                 #over n_docs_splits
