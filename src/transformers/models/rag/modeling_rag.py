@@ -1283,41 +1283,41 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             # set to correct device
             context_input_ids = context_input_ids.to(input_ids)
 
-
+        num_beams = encoder_outputs.size(0)
         hypos = []
-        model_kwargs["num_beams"] = num_beams
+        #model_kwargs["num_beams"] = 1
 
         batch_size = input_ids.shape[0] if input_ids is not None else context_input_ids.shape[0] // n_docs
-
         for index in range(batch_size):
             # first, generate beams from documents:
             generator_input_ids = context_input_ids[index * n_docs : (index + 1) * n_docs]  # (n_docs, max_len)
             generator_encoder_outputs = encoder_outputs[index * n_docs : (index + 1) * n_docs]
+
             generator_encoder_outputs = BaseModelOutput(last_hidden_state=generator_encoder_outputs)
             generator_attention_mask = context_attention_mask[index * n_docs : (index + 1) * n_docs]
             model_kwargs["encoder_outputs"] = generator_encoder_outputs
             model_kwargs["attention_mask"] = generator_attention_mask
-            #print(generator_attention_mask)
 
             #TODO: Allow for custom parameters!
             beam_scorer = BeamSearchScorer(
                 batch_size=1,
                 max_length=70,
-                num_beams=num_beams,
-                num_beam_hyps_to_keep=num_beams,
+                num_beams=generator_attention_mask.size(0),
+                num_beam_hyps_to_keep=1,
                 device=self.device,
             )
 
             logits_processor = LogitsProcessorList([
                 MinLengthLogitsProcessor(1, eos_token_id=self.generator.config.eos_token_id),
             ])
-            input_ids_dec = torch.ones((num_beams, 1), device=self.device, dtype=torch.long)
+            input_ids_dec = torch.ones((generator_attention_mask.size(0), 1), device=self.device, dtype=torch.long)
             input_ids_dec = input_ids_dec * self.generator.config.decoder_start_token_id
 
             output_sequences = self.generator.beam_search(input_ids_dec,\
                 beam_scorer,\
                 logits_processor=logits_processor,\
-                num_return_sequences=num_beams,\
+                num_beams=generator_attention_mask.size(0),\
+                num_return_sequences=1,\
                 **model_kwargs)
 
             #print(self.retriever.generator_tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
