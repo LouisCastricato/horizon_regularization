@@ -121,7 +121,7 @@ class Seq2SeqDataset(Dataset):
 
     def collate_fn(self, batch) -> Dict[str, torch.Tensor]:
         input_ids = torch.stack([x["input_ids"] for x in batch])
-        extra_context = torch.stack([x["extra_context"]["input_ids"].squeeze() for x in batch])
+        extra_context = torch.stack([x["extra_context"].squeeze() for x in batch])
         masks = torch.stack([x["attention_mask"] for x in batch])
         target_ids = torch.stack([x["decoder_input_ids"] for x in batch])
         tgt_pad_token_id = (
