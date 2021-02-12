@@ -367,11 +367,13 @@ class GenerativeQAModule(BaseTransformer):
     def get_dataset(self, type_path) -> Seq2SeqDataset:
         n_obs = self.n_obs[type_path]
         max_target_length = self.target_lens[type_path]
+        n_words_to_src = self.config.n_words_to_src
         dataset = Seq2SeqDataset(
             self.tokenizer,
             type_path=type_path,
             n_obs=n_obs,
             max_target_length=max_target_length,
+            n_words_to_src=n_words_to_src,
             **self.dataset_kwargs,
         )
         return dataset

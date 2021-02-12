@@ -56,6 +56,7 @@ class Seq2SeqDataset(Dataset):
         n_obs=None,
         src_lang=None,
         tgt_lang=None,
+        n_words_to_src=None,
         prefix="",
     ):
         super().__init__()
@@ -71,6 +72,7 @@ class Seq2SeqDataset(Dataset):
             self.src_lens = self.src_lens[:n_obs]
         self.src_lang = src_lang
         self.tgt_lang = tgt_lang
+        self.n_words_to_src = n_words_to_src
 
     def __len__(self):
         return len(self.src_lens)
