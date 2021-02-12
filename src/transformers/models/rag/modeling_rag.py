@@ -539,7 +539,8 @@ class RagModel(RagPreTrainedModel):
             start = 0
             #Predetermine q
             t, q = tok.decode(docs[i][0], skip_special_tokens=True).split("//")[0:2]
-
+            #q = q.split(': : :')[0] # separating by : : : to remove the n tokens
+            
             if extra[i//self.config.n_docs_splits] is not None and not self.config.skip_ec:
                 context_texts.append("<context>" + extra[i//self.config.n_docs_splits] + "//" + q)
                 start = 1
@@ -900,6 +901,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
             start = 0
             #Predetermine q
             t, q = tok.decode(docs[i][0], skip_special_tokens=True).split("//")[0:2]
+            #q = q.split(': : :')[0] # separating by : : : to remove the n tokens
 
             if extra[i//self.config.n_docs_splits] is not None and not self.config.skip_ec:
                 context_texts.append("<context>" + extra[i//self.config.n_docs_splits] + "//" + q)

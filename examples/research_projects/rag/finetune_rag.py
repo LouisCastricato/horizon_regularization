@@ -131,6 +131,13 @@ class GenerativeQAModule(BaseTransformer):
         config.passages_path = hparams.passages_path or config.passages_path
         config.index_path = hparams.index_path or config.index_path
         config.use_dummy_dataset = hparams.use_dummy_dataset
+        config.n_docs = 4
+        config.n_docs_splits = 4
+        config.max_combined_length = 500
+        config.n_words_to_src = 40 # using 40 tokens to add to src
+        config.skip_ec = False
+        config.bart_base_qe = True # using bart encoder as qe
+        config.do_deduplication = True
 
         # set extra_model_params for generator configs and load_model
         extra_model_params = ("encoder_layerdrop", "decoder_layerdrop", "attention_dropout", "dropout")
@@ -160,6 +167,14 @@ class GenerativeQAModule(BaseTransformer):
             if self.is_rag_model
             else AutoTokenizer.from_pretrained(hparams.model_name_or_path)
         )
+
+        # if the bart base qe wants to be used
+        if config.bart_base_qe:
+            #print("yuh")
+            # load bbforrag
+            bart_base_model = BartForConditionalGeneration.from_pretrained("facebook/bart-base").cuda()
+            model.question_encoder = bart_base_model.model.encoder
+            #sys.exit()
 
         super().__init__(hparams, config=config, tokenizer=tokenizer, model=model)
 

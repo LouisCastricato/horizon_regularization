@@ -92,9 +92,14 @@ class Seq2SeqDataset(Dataset):
             self.tokenizer.question_encoder if isinstance(self.tokenizer, RagTokenizer) else self.tokenizer
         )
         target_tokenizer = self.tokenizer.generator if isinstance(self.tokenizer, RagTokenizer) else self.tokenizer
-
-        extra_context = encode_line(source_tokenizer, source_line.split("///")[1], 300, "right", False)
-        source_inputs = encode_line(source_tokenizer, source_line.split("///")[0], self.max_source_length, "right")
+        ec_text = source_line.split("///")[1]
+        extra_context = encode_line(source_tokenizer, ec_text, 300, "right", False)
+        # get the first self.n_words_to_src to append to question for source (get from ec_text)
+        ec_text_words = ec_text.split()
+        ec_text_n_words = ' '.join(ec_text_words[:self.n_words_to_src])
+        src_question = source_line.split("///")[0]
+        src_question_ec_nwords = ec_text_n_words #src_question + ':::' + ec_text_n_words # separating by :::
+        source_inputs = encode_line(source_tokenizer, src_question_ec_nwords, self.max_source_length, "right")
         target_inputs = encode_line(target_tokenizer, tgt_line, self.max_target_length, "right")
 
         source_ids = source_inputs["input_ids"].squeeze()

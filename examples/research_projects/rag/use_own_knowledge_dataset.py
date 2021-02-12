@@ -17,6 +17,7 @@ from transformers import (
     RagRetriever,
     RagSequenceForGeneration,
     RagTokenizer,
+    RagConfig,
 )
 
 
@@ -24,11 +25,37 @@ logger = logging.getLogger(__name__)
 torch.set_grad_enabled(False)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+use_generated_model = False # SET TO TRUE IF YOU WANT TO USE GENERATED MODEL
 
-def split_text(text: str, n=100, character=" ") -> List[str]:
+def split_text(text: str, n=50, character=" ") -> List[str]:
     """Split the text every ``n``-th occurrence of ``character``"""
     text = text.split(character)
-    return [character.join(text[i : i + n]).strip() for i in range(0, len(text), n)]
+    to_ret = [character.join(text[i : i + n]).strip() for i in range(0, len(text), n)]
+    for text_split in to_ret:
+      # get all of the occurences of each anon word
+      curr_words = text_split.split()
+      anon_names = {}
+      f_c,m_c,n_c = 0,0,0
+      for w in curr_words:
+        if 'Jane' in w and w not in anon_names:
+          anon_names[w] = f_c
+          f_c += 1
+        elif 'John' in w and w not in anon_names:
+          anon_names[w] = m_c
+          m_c += 1
+        elif 'Sam' in w and w not in anon_names:
+          anon_names[w] = n_c
+          n_c += 1
+      # reset all names accordingly
+      for i in range(len(curr_words)):
+        c_w = curr_words[i]
+        if 'Jane' in c_w:
+          curr_words[i] = 'Jane'+str(anon_names[c_w])
+        elif 'John' in c_w:
+          curr_words[i] = 'John'+str(anon_names[c_w])
+        elif 'Sam' in c_w:
+          curr_words[i] = 'Sam'+str(anon_names[c_w])
+    return to_ret
 
 
 def split_documents(documents: dict) -> dict:
@@ -47,7 +74,11 @@ def embed(documents: dict, ctx_encoder: DPRContextEncoder, ctx_tokenizer: DPRCon
     input_ids = ctx_tokenizer(
         documents["title"], documents["text"], truncation=True, padding="longest", return_tensors="pt"
     )["input_ids"]
-    embeddings = ctx_encoder(input_ids.to(device=device), return_dict=True).pooler_output
+    if use_generated_model:
+        embeddings = ctx_encoder(input_ids.to(device=device), return_dict=True).last_hidden_state
+        embeddings = torch.sum(embeddings, dim=1)
+    else:
+        embeddings = ctx_encoder(input_ids.to(device=device), return_dict=True).pooler_output
     return {"embeddings": embeddings.detach().cpu().numpy()}
 
 
@@ -76,12 +107,21 @@ def main(
 
     # More info about loading csv files in the documentation: https://huggingface.co/docs/datasets/loading_datasets.html?highlight=csv#csv-files
 
-    # Then split the documents into passages of 100 words
+    # Then split the documents into passages of n words (changing the param in split_text to what you want n to be)
     dataset = dataset.map(split_documents, batched=True, num_proc=processing_args.num_proc)
-
     # And compute the embeddings
-    ctx_encoder = DPRContextEncoder.from_pretrained(rag_example_args.dpr_ctx_encoder_model_name).to(device=device)
-    ctx_tokenizer = DPRContextEncoderTokenizerFast.from_pretrained(rag_example_args.dpr_ctx_encoder_model_name)
+    if use_generated_model:
+        model_path = 'ragfinetune_4_4_false_50_true/checkpoint2/' # SET PATH TO CHECKPOINT
+        config = RagConfig.from_pretrained(model_path)
+        config.n_docs = 4
+        config.n_docs_splits = 4
+        retriever = RagRetriever.from_pretrained(model_path, config=config)
+        checkpoint_model = RagSequenceForGeneration.from_pretrained(model_path, config=config, retriever=retriever).cuda()
+        ctx_encoder = checkpoint_model.generator.get_encoder()
+        ctx_tokenizer = checkpoint_model.retriever.generator_tokenizer
+    else:
+        ctx_encoder = DPRContextEncoder.from_pretrained(rag_example_args.dpr_ctx_encoder_model_name).to(device=device)
+        ctx_tokenizer = DPRContextEncoderTokenizerFast.from_pretrained(rag_example_args.dpr_ctx_encoder_model_name)
     new_features = Features(
         {"text": Value("string"), "title": Value("string"), "embeddings": Sequence(Value("float32"))}
     )  # optional, save as float32 instead of float64 to save space

@@ -113,6 +113,8 @@ class RagConfig(PretrainedConfig):
         use_cache=True,
         fusion_decoder=True,
         skip_ec = False,
+        n_words_to_src = 20, # how many tokens of context we add to src
+        bart_base_qe = False,  # whether we use bart encoder as qe
         **kwargs
     ):
         super().__init__(
@@ -167,6 +169,8 @@ class RagConfig(PretrainedConfig):
         self.n_docs_splits = n_docs_splits
         self.skip_ec = skip_ec
 
+        self.n_words_to_src = n_words_to_src
+        self.bart_base_qe = bart_base_qe
 
     @classmethod
     def from_question_encoder_generator_configs(
